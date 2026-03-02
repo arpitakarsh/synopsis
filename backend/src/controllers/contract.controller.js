@@ -20,7 +20,13 @@ async function getPresignedUrl(req, res) {
 
 async function createContract(req, res) {
   try {
-    const { fileName, s3Key } = req.body
+    const {
+      fileName,
+      s3Key,
+      vendorName,
+      contractTitle,
+      contractText,
+    } = req.body
     const companyId = req.user.companyId
 
     if (!fileName || !s3Key) {
@@ -38,7 +44,12 @@ async function createContract(req, res) {
 
     res.status(202).json({ id: contract.id, status: contract.status })
 
-    aiService.analyzeContract(contract.id, s3Key)
+    aiService.analyzeContract(contract.id, s3Key, {
+      vendorName,
+      contractTitle,
+      contractText,
+      fileName,
+    })
   } catch (err) {
     console.error('Create contract error:', err)
     res.status(500).json({ error: 'Failed to create contract' })

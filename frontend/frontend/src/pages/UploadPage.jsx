@@ -3,6 +3,25 @@ import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import api from '../api/axios'
 
+function toErrorMessage(err, fallback = 'Upload failed. Please try again.') {
+  const payload = err?.response?.data
+
+  if (typeof payload?.error === 'string') return payload.error
+  if (typeof payload?.message === 'string') return payload.message
+  if (Array.isArray(payload?.detail)) {
+    const messages = payload.detail
+      .map((item) => {
+        if (typeof item?.msg === 'string') return item.msg
+        if (typeof item === 'string') return item
+        return ''
+      })
+      .filter(Boolean)
+    if (messages.length) return messages.join(', ')
+  }
+  if (typeof err?.message === 'string') return err.message
+
+  return fallback
+}
 export default function UploadPage() {
   const navigate = useNavigate()
   const [file, setFile] = useState(null)
@@ -69,7 +88,7 @@ export default function UploadPage() {
 
       navigate(`/app/dashboard?id=${contractRes.data.id}`)
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Upload failed. Please try again.')
+      setError(toErrorMessage(err))
       setProgress('idle')
     } finally {
       setUploading(false)

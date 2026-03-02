@@ -139,13 +139,20 @@ function normalizeAnalysisPayload(rawPayload) {
   }
 }
 
-async function analyzeContract(contractId, s3Key) {
+async function analyzeContract(contractId, s3Key, metadata = {}) {
   try {
+    const vendorName = String(metadata.vendorName || '').trim()
+    const contractTitle = String(metadata.contractTitle || metadata.fileName || '').trim()
+    const contractText = String(metadata.contractText || '').trim()
+
     const response = await axios.post(
       `${process.env.AI_SERVICE_URL}/analyze`,
       {
         contract_id: contractId,
-        s3_key:  s3Key,
+        s3_key: s3Key,
+        contract_title: contractTitle,
+        vendor_name: vendorName,
+        contract_text: contractText,
       },
       { timeout: 120000 }
     )
