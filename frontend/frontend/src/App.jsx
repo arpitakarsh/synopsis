@@ -17,19 +17,21 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
-
       <Route path="/auth" element={<AuthPage />} />
 
-      <Route path="/app" element={
-        <ProtectedRoute>
-          <Layout />
-        </ProtectedRoute>
-      }>
+      <Route
+        path="/app"
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<Navigate to="/app/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="upload"    element={<UploadPage />} />
-        <Route path="history"   element={<HistoryPage />} />
-        <Route path="team"      element={<TeamPage />} />
+        <Route path="upload" element={<UploadPage />} />
+        <Route path="history" element={<HistoryPage />} />
+        <Route path="team" element={<TeamPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

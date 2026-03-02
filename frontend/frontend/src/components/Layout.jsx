@@ -56,10 +56,10 @@ const Icons = {
 }
 
 const NAV_ITEMS = [
-  { label: 'Dashboard', icon: Icons.Dashboard, to: '/dashboard' },
-  { label: 'Upload Contract', icon: Icons.Upload, to: '/upload' },
-  { label: 'Contract History', icon: Icons.History, to: '/history' },
-  { label: 'Team', icon: Icons.Team, to: '/team' },
+  { label: 'Dashboard',        icon: Icons.Dashboard, to: '/app/dashboard' },
+  { label: 'Upload Contract',  icon: Icons.Upload,    to: '/app/upload'    },
+  { label: 'Contract History', icon: Icons.History,   to: '/app/history'   },
+  { label: 'Team',             icon: Icons.Team,      to: '/app/team'      },
 ]
 
 export default function Layout() {
@@ -97,24 +97,35 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 py-4 px-2 space-y-0.5 overflow-y-auto">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              title={collapsed ? item.label : undefined}
-              className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group w-full ${isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
-            >
-              <span className={`flex-shrink-0 ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-600'}`}>
-                <item.icon />
-              </span>
-              {!collapsed && (
-                <span className="truncate">{item.label}</span>
-              )}
-              {isActive && !collapsed && (
-                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-600 flex-shrink-0" />
-              )}
-            </NavLink>
-          ))}
+         {NAV_ITEMS.map((item) => (
+  <NavLink
+    key={item.to}
+    to={item.to}
+    title={collapsed ? item.label : undefined}
+    className={({ isActive }) => `
+      flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
+      transition-all duration-150 group w-full
+      ${isActive
+        ? 'bg-blue-50 text-blue-700'
+        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+      }
+    `}
+  >
+    {({ isActive }) => (
+      <>
+        <span className={`flex-shrink-0 ${isActive ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-600'}`}>
+          <item.icon />
+        </span>
+        {!collapsed && (
+          <span className="truncate">{item.label}</span>
+        )}
+        {isActive && !collapsed && (
+          <span className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-600 flex-shrink-0" />
+        )}
+      </>
+    )}
+  </NavLink>
+))}
         </nav>
 
         <div className="border-t border-gray-100 p-3">
