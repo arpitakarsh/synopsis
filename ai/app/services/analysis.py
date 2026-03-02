@@ -1,37 +1,28 @@
 from ..models.schemas import AnalyzeRequest, AnalyzeResponse, ClauseResult
 
-
 import os
 import math
 import json
 import urllib.request
 from pdfminer.high_level import extract_text
-from openai import OpenAI
+from openai import AsyncOpenAI
 from ..prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
-# We lazily instantiate the OpenAI/Gemini client to avoid import-time
-# failures.  This allows the application to start even if the API key isn't
-# configured (useful for smoke tests or when mocking).  The first request to
-# `analyze_contract` will raise a RuntimeError if no key is available.
+# We lazily instantiate the OpenAI/Gemini client to avoid import-time failures.
 _client = None
-
 
 def _get_client():
     global _client
     if _client is None:
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not api_key:
-            # we purposely delay the error until runtime, but still provide a
-            # clear message so callers can catch it and convert to HTTP
-            # responses if desired.
             raise RuntimeError(
                 "Environment variable GEMINI_API_KEY or OPENAI_API_KEY must be set"
             )
-        _client = OpenAI(api_key=api_key)
+        _client = AsyncOpenAI(api_key=api_key)
     return _client
 
 MAX_CHARS = 80000  # ~20k tokens; adjust if needed
-
 
 def _fetch_text_from_cloudinary(cloudinary_key: str) -> str:
     """Download PDF from Cloudinary and extract text."""
@@ -44,7 +35,6 @@ def _fetch_text_from_cloudinary(cloudinary_key: str) -> str:
     except Exception as exc:
         raise RuntimeError(f"Failed to fetch or parse PDF from Cloudinary ({url}): {exc}")
 
-
 def _chunk_text(text: str, max_chars: int = MAX_CHARS) -> str:
     if len(text) <= max_chars:
         return text
@@ -52,16 +42,9 @@ def _chunk_text(text: str, max_chars: int = MAX_CHARS) -> str:
     back = math.floor(max_chars * 0.15)
     return text[:front] + "\n[...middle sections truncated...]\n" + text[-back:]
 
-
 async def analyze_contract(request: AnalyzeRequest) -> AnalyzeResponse:
-    """Call the Gemini / GPT-4o model with a well-engineered prompt and return
-    the structured result as an AnalyzeResponse instance.
+    """Call the AI model with a well-engineered prompt and return structured result."""
 
-    This implementation follows the hackathon blueprint: low temperature,
-    response_format json_object, max_tokens 4000, 90s timeout.
-    """
-
-    # determine where to pull the text from
     if request.contract_text:
         raw_text = request.contract_text
     elif request.s3_key:
@@ -82,7 +65,7 @@ async def analyze_contract(request: AnalyzeRequest) -> AnalyzeResponse:
     try:
         client = _get_client()
         resp = await client.chat.completions.create(
-            model=os.getenv("MODEL", "gemini-1.1"),
+            model=os.getenv("MODEL", "gpt-4o"), 
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -93,18 +76,16 @@ async def analyze_contract(request: AnalyzeRequest) -> AnalyzeResponse:
             timeout=90,
         )
 
-        # the SDK returns content as a JSON string already parsed sometimes,
-        # but we'll defensively load it.
-        content = resp.choices[0].message.get("content")
+        content = resp.choices[0].message.content
+        
         import sys
         print(f"[DEBUG] Raw model response (first 200 chars): {repr(content[:200])}", file=sys.stderr)
+        
         if isinstance(content, str):
             data = json.loads(content)
         else:
             data = content
 
-        # convert to AnalyzeResponse dataclass - this may need further
-        # adjustments depending on actual field names returned by the model.
         clauses = [
             ClauseResult(
                 clause_type=c.get("clause_type"),
@@ -130,15 +111,10 @@ async def analyze_contract(request: AnalyzeRequest) -> AnalyzeResponse:
         )
 
     except json.JSONDecodeError as err:
-        # AI response was not valid JSON. Log it and return helpful error.
         import sys
         print(f"JSON Decode Error: {err}", file=sys.stderr)
-        print(f"Raw content was: {repr(content[:500])}", file=sys.stderr)
-        raise ValueError(
-            f"Model returned invalid JSON: {err.msg} at line {err.lineno}, col {err.colno}"
-        )
+        raise ValueError(f"Model returned invalid JSON: {err.msg} at line {err.lineno}")
     except Exception as exc:
-        # Catch any other error (missing fields, validation, etc.) and re-raise with context.
         import sys
         print(f"Unexpected error during analysis: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise

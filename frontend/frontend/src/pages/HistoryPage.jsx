@@ -70,7 +70,8 @@ export default function HistoryPage() {
     try {
       const res = await api.get('/contracts')
       setContracts(res.data)
-    } catch {
+    } catch (error) {
+      console.error('Failed to fetch contracts:', error)
     } finally {
       setLoading(false)
     }
@@ -81,7 +82,8 @@ export default function HistoryPage() {
     try {
       await api.delete(`/contracts/${id}`)
       setContracts(prev => prev.filter(c => c.id !== id))
-    } catch {
+    } catch (error) {
+      console.error('Failed to delete contract:', error)
     } finally {
       setDeleting(null)
       setConfirmDelete(null)
@@ -184,7 +186,7 @@ export default function HistoryPage() {
               <div
                 key={contract.id}
                 className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-gray-50 transition-all duration-150 group cursor-pointer"
-                onClick={() => contract.status === 'DONE' && navigate(`/dashboard?id=${contract.id}`)}
+                onClick={() => contract.status === 'DONE' && navigate(`/app/dashboard?id=${contract.id}`)}
               >
                 <div className="col-span-4 min-w-0">
                   <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-blue-600 transition-colors duration-150">

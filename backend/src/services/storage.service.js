@@ -12,9 +12,9 @@ async function getUploadSignature(fileName) {
   const timestamp = Math.round(new Date().getTime() / 1000)
 
   const paramsToSign = {
-    public_id: publicId,
-    timestamp:timestamp,
-  }
+  public_id: publicId,
+  timestamp: timestamp,     
+}
 
   const signature = cloudinary.utils.api_sign_request(
     paramsToSign,
