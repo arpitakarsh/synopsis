@@ -48,6 +48,7 @@ export default function UploadPage() {
       formData.append('timestamp', timestamp)
       formData.append('signature', signature)
       formData.append('api_key', apiKey)
+      
 
       const cloudRes = await fetch(
         `https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`,
@@ -58,9 +59,10 @@ export default function UploadPage() {
       if (!cloudData.public_id) throw new Error('Cloudinary upload failed')
 
       setProgress('analyzing')
+      const analysisFileRef = cloudData.secure_url || cloudData.public_id
       const contractRes = await api.post('/contracts', {
         fileName: file.name,
-        s3Key: cloudData.public_id,
+        s3Key: analysisFileRef,
         vendorName: vendorName.trim(),
         contractTitle: contractTitle.trim(),
         contractValue: contractValue.trim() || null,

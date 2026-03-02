@@ -70,7 +70,8 @@ export default function HistoryPage() {
     try {
       const res = await api.get('/contracts')
       setContracts(res.data)
-    } catch {
+    } catch (error) {
+      console.error('Failed to fetch contracts:', error)
     } finally {
       setLoading(false)
     }
@@ -81,7 +82,8 @@ export default function HistoryPage() {
     try {
       await api.delete(`/contracts/${id}`)
       setContracts(prev => prev.filter(c => c.id !== id))
-    } catch {
+    } catch (error) {
+      console.error('Failed to delete contract:', error)
     } finally {
       setDeleting(null)
       setConfirmDelete(null)

@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
-  BarChart, Bar, XAxis, YAxis, Legend
+  BarChart, Bar, XAxis, YAxis
 } from 'recharts'
 import api from '../api/axios'
 
@@ -153,6 +153,7 @@ export default function DashboardPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const contractId = searchParams.get('id')
+  const LAST_CONTRACT_KEY = 'lastDashboardContractId'
   const emptyDonePollsRef = useRef(0)
   const MAX_EMPTY_DONE_POLLS = 10
 
@@ -161,22 +162,14 @@ export default function DashboardPage() {
   const [polling, setPolling] = useState(false)
   const [selectedClause, setSelectedClause] = useState(null)
   const [filterRisk, setFilterRisk] = useState('ALL')
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (!contractId) { setLoading(false); return }
-    emptyDonePollsRef.current = 0
-    fetchContract()
-  }, [contractId])
-
-  function hasClauseData(data) {
+  const hasClauseData = useCallback((data) => {
     return Array.isArray(data?.clauses) && data.clauses.length > 0
-  }
-
-  async function fetchContract() {
+  }, [])
+  const fetchContract = useCallback(async () => {
     try {
       const res = await api.get(`/contracts/${contractId}`)
       setContract(res.data)
+      localStorage.setItem(LAST_CONTRACT_KEY, res.data.id || contractId)
       if (res.data.status === 'PROCESSING' || res.data.status === 'PENDING') {
         setPolling(true)
       } else if (res.data.status === 'DONE' && !hasClauseData(res.data)) {
@@ -187,9 +180,30 @@ export default function DashboardPage() {
         setLoading(false)
       }
     } catch {
+      localStorage.removeItem(LAST_CONTRACT_KEY)
       setLoading(false)
     }
-  }
+  }, [contractId, hasClauseData])
+
+  useEffect(() => {
+    if (!contractId) {
+      const lastContractId = localStorage.getItem(LAST_CONTRACT_KEY)
+      if (lastContractId) {
+        navigate(`/app/dashboard?id=${lastContractId}`, { replace: true })
+      }
+      return
+    }
+    localStorage.setItem(LAST_CONTRACT_KEY, contractId)
+  }, [contractId, navigate])
+
+  useEffect(() => {
+    if (!contractId) return
+    emptyDonePollsRef.current = 0
+    const timer = setTimeout(() => {
+      fetchContract()
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [contractId, fetchContract])
 
   useEffect(() => {
     if (!polling) return
@@ -217,7 +231,7 @@ export default function DashboardPage() {
       }
     }, 3000)
     return () => clearInterval(interval)
-  }, [polling, contractId])
+  }, [polling, contractId, hasClauseData])
 
   if (!contractId) {
     return (
@@ -350,14 +364,14 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Executive Summary</p>
-            <p className="text-sm text-gray-700 leading-relaxed">{contract.executiveSummary}</p>
+            <p className="text-sm text-gray-700 leading-relaxed">{contract.executiveSummary || 'No executive summary provided by AI.'}</p>
           </div>
 
-          {contract.redFlags?.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">
-                🚩 Red Flags ({contract.redFlags.length})
-              </p>
+          <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">
+              Red Flags ({contract.redFlags?.length || 0})
+            </p>
+            {contract.redFlags?.length > 0 ? (
               <div className="space-y-2">
                 {contract.redFlags.map((flag, i) => (
                   <div key={i} className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-xl">
@@ -368,8 +382,10 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-sm text-gray-500">No red flags provided by AI.</p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -506,3 +522,5 @@ export default function DashboardPage() {
     </div>
   )
 }
+
+
