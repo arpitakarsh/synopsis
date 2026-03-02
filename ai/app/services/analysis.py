@@ -1,3 +1,5 @@
+import json
+import math
 import os
 import re
 from io import BytesIO
@@ -5,12 +7,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen
 
+from openai import AsyncOpenAI
 from pypdf import PdfReader
 
 from ..models.schemas import AnalyzeRequest, AnalyzeResponse, ClauseResult
+from ..prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 RISK_WEIGHTS = {"LOW": 20, "MEDIUM": 45, "HIGH": 75, "CRITICAL": 90}
 SEVERITY_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+MAX_CHARS = 80_000
 WORD_TO_NUMBER = {
     "one": 1,
     "two": 2,
@@ -40,10 +45,164 @@ WORD_TO_NUMBER = {
     "eighty": 80,
     "ninety": 90,
 }
+_client: AsyncOpenAI | None = None
 
 
 def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _chunk_text(text: str, max_chars: int = MAX_CHARS) -> str:
+    if len(text) <= max_chars:
+        return text
+    front = math.floor(max_chars * 0.70)
+    back = math.floor(max_chars * 0.15)
+    return text[:front] + "\n[...middle sections truncated for length...]\n" + text[-back:]
+
+
+def _api_key() -> str | None:
+    return (os.getenv("GROQ_API_KEY") or "").strip() or None
+
+
+def _get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        key = _api_key()
+        if not key:
+            raise RuntimeError("Missing GROQ_API_KEY in AI service environment.")
+        if not key.startswith("gsk_"):
+            raise RuntimeError("Invalid GROQ_API_KEY format. Expected key to start with 'gsk_'.")
+        _client = AsyncOpenAI(
+            api_key=key,
+            base_url="https://api.groq.com/openai/v1",
+        )
+    return _client
+
+
+def _build_user_prompt(request: AnalyzeRequest, contract_text: str) -> str:
+    prompt = USER_PROMPT_TEMPLATE
+    replacements = {
+        "{contract_title}": request.contract_title or "Untitled contract",
+        "{vendor_name}": request.vendor_name or "Unknown vendor",
+        "{contract_value}": request.contract_value or "Not specified",
+        "{page_count}": str(max(1, len(contract_text) // 3000)),
+        "{full_contract_text}": contract_text,
+    }
+    for key, value in replacements.items():
+        prompt = prompt.replace(key, value)
+    return prompt
+
+
+def _clamp_int(value: object, default: int = 50) -> int:
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_json_payload(raw: str) -> dict:
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
+    if fenced:
+        parsed = json.loads(fenced.group(1).strip())
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError("AI returned non-JSON payload.")
+
+
+def _normalize_ai_response(data: dict) -> AnalyzeResponse:
+    source = data.get("analysis") if isinstance(data.get("analysis"), dict) else data
+
+    dimension_scores = source.get("dimension_scores") if isinstance(source.get("dimension_scores"), dict) else {}
+    red_flags = source.get("red_flags")
+    if not isinstance(red_flags, list):
+        red_flags = []
+
+    raw_clauses = source.get("clauses")
+    if not isinstance(raw_clauses, list):
+        raw_clauses = []
+
+    clauses: list[ClauseResult] = []
+    for raw_clause in raw_clauses:
+        if not isinstance(raw_clause, dict):
+            continue
+        risk_level = str(raw_clause.get("risk_level", "MEDIUM")).upper().strip()
+        if risk_level not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+            risk_level = "MEDIUM"
+        clauses.append(
+            ClauseResult(
+                clause_type=str(raw_clause.get("clause_type", "General Clause")).strip() or "General Clause",
+                extracted_text=str(raw_clause.get("extracted_text", "")).strip(),
+                risk_level=risk_level,
+                explanation=str(raw_clause.get("explanation", "No explanation provided by AI.")).strip(),
+                negotiation_recommendation=(
+                    str(raw_clause.get("negotiation_recommendation", "No recommendation provided by AI.")).strip()
+                ),
+            )
+        )
+
+    if not clauses:
+        raise ValueError("AI response did not include any clauses.")
+
+    return AnalyzeResponse(
+        overall_risk_score=_clamp_int(source.get("overall_risk_score"), default=_score_from_clauses(clauses)),
+        executive_summary=str(source.get("executive_summary", "No executive summary provided by AI.")).strip()
+        or "No executive summary provided by AI.",
+        red_flags=[str(flag).strip() for flag in red_flags if str(flag).strip()][:12],
+        clauses=clauses,
+        liability_score=_clamp_int(dimension_scores.get("liability"), 50),
+        renewal_risk_score=_clamp_int(dimension_scores.get("renewal_risk"), 50),
+        ip_ownership_score=_clamp_int(dimension_scores.get("ip_ownership"), 50),
+        termination_score=_clamp_int(dimension_scores.get("termination"), 50),
+        payment_exposure_score=_clamp_int(dimension_scores.get("payment_exposure"), 50),
+    )
+
+
+async def _analyze_with_llm(request: AnalyzeRequest, contract_text: str) -> AnalyzeResponse:
+    model = os.getenv("MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
+    max_tokens = int(os.getenv("MAX_TOKENS", 4000))
+    safe_text = _chunk_text(contract_text)
+    user_prompt = _build_user_prompt(request, safe_text)
+
+    client = _get_client()
+    response = await client.chat.completions.create(
+        model=model,
+        temperature=0.1,
+        max_tokens=max_tokens,
+        timeout=90,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    content = response.choices[0].message.content or ""
+
+    try:
+        parsed = _parse_json_payload(content)
+    except Exception:
+        retry_prompt = (
+            user_prompt
+            + "\n\nCRITICAL: Return ONLY valid JSON for the required structure. No markdown, no explanations."
+        )
+        retry = await client.chat.completions.create(
+            model=model,
+            temperature=0.0,
+            max_tokens=max_tokens,
+            timeout=90,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": retry_prompt},
+            ],
+        )
+        parsed = _parse_json_payload(retry.choices[0].message.content or "")
+
+    return _normalize_ai_response(parsed)
 
 
 def _cloudinary_raw_url(public_id: str) -> str:
@@ -361,44 +520,13 @@ async def analyze_contract(request: AnalyzeRequest) -> AnalyzeResponse:
             raise ValueError("Either contract_text or s3_key must be provided.")
 
         if not contract_text:
-            return AnalyzeResponse(
-                overall_risk_score=55,
-                executive_summary="Could not extract readable contract text. Returning fallback risk output.",
-                red_flags=["Contract text could not be extracted from provided input."],
-                clauses=[
-                    ClauseResult(
-                        clause_type="Extraction Failure",
-                        extracted_text=(request.s3_key or "No source key provided"),
-                        risk_level="HIGH",
-                        explanation="Analyzer could not parse readable text from the provided contract source.",
-                        negotiation_recommendation="Upload a text-based PDF or provide plain contract text for analysis.",
-                    )
-                ],
-                liability_score=55,
-                renewal_risk_score=55,
-                ip_ownership_score=40,
-                termination_score=55,
-                payment_exposure_score=55,
-            )
+            raise ValueError("Could not extract readable contract text from input.")
 
-        return _heuristic_analysis(contract_text)
+        try:
+            return await _analyze_with_llm(request, contract_text)
+        except Exception:
+            if os.getenv("ALLOW_HEURISTIC_FALLBACK", "false").strip().lower() in {"1", "true", "yes"}:
+                return _heuristic_analysis(contract_text)
+            raise
     except Exception as exc:
-        return AnalyzeResponse(
-            overall_risk_score=60,
-            executive_summary="Automated analysis failed during processing. Returning fallback output for manual follow-up.",
-            red_flags=[f"Analyzer fallback triggered: {str(exc)}"],
-            clauses=[
-                ClauseResult(
-                    clause_type="Analyzer Fallback",
-                    extracted_text=(request.s3_key or request.contract_id),
-                    risk_level="HIGH",
-                    explanation="The analyzer encountered an internal processing error while fetching or parsing contract content.",
-                    negotiation_recommendation="Check AI service logs, verify file accessibility/format, and retry analysis.",
-                )
-            ],
-            liability_score=60,
-            renewal_risk_score=60,
-            ip_ownership_score=40,
-            termination_score=60,
-            payment_exposure_score=60,
-        )
+        raise RuntimeError(f"AI analysis failed: {str(exc)}") from exc
