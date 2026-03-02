@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 from pypdf import PdfReader
 
 from ..models.schemas import AnalyzeRequest, AnalyzeResponse, ClauseResult
-from ..prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from ..prompts import SYSTEM_PROMPT
 
 RISK_WEIGHTS = {"LOW": 20, "MEDIUM": 45, "HIGH": 75, "CRITICAL": 90}
 SEVERITY_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
@@ -61,7 +61,10 @@ def _chunk_text(text: str, max_chars: int = MAX_CHARS) -> str:
 
 
 def _api_key() -> str | None:
-    return (os.getenv("GROQ_API_KEY") or "").strip() or None
+    raw = (os.getenv("GROQ_API_KEY") or "").strip()
+    # Handle keys wrapped in quotes from shell/env parsing.
+    raw = raw.strip('"').strip("'")
+    return raw or None
 
 
 def _get_client() -> AsyncOpenAI:
@@ -80,17 +83,11 @@ def _get_client() -> AsyncOpenAI:
 
 
 def _build_user_prompt(request: AnalyzeRequest, contract_text: str) -> str:
-    prompt = USER_PROMPT_TEMPLATE
-    replacements = {
-        "{contract_title}": request.contract_title or "Untitled contract",
-        "{vendor_name}": request.vendor_name or "Unknown vendor",
-        "{contract_value}": request.contract_value or "Not specified",
-        "{page_count}": str(max(1, len(contract_text) // 3000)),
-        "{full_contract_text}": contract_text,
-    }
-    for key, value in replacements.items():
-        prompt = prompt.replace(key, value)
-    return prompt
+    return (
+        "Analyze this contract. Return ONLY JSON. Do not add any text before or after the JSON.\n\n"
+        f"CONTRACT TEXT:\n{contract_text}\n\n"
+        "Remember: score mutual and buyer-favorable terms as LOW. Do not over-inflate risk scores."
+    )
 
 
 def _clamp_int(value: object, default: int = 50) -> int:
@@ -101,14 +98,16 @@ def _clamp_int(value: object, default: int = 50) -> int:
 
 
 def _parse_json_payload(raw: str) -> dict:
+    # Strip markdown fences some models may add around JSON.
+    response_text = raw.replace("```json", "").replace("```", "").strip()
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(response_text)
         if isinstance(parsed, dict):
             return parsed
     except json.JSONDecodeError:
         pass
 
-    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", response_text, re.IGNORECASE)
     if fenced:
         parsed = json.loads(fenced.group(1).strip())
         if isinstance(parsed, dict):
