@@ -55,4 +55,8 @@ model Clause {
   explanation               String
   negotiationRecommendation String
   createdAt                 DateTime @default(now())
+<<<<<<< Updated upstream
 } 
+=======
+} 
+>>>>>>> Stashed changes
