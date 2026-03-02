@@ -1,6 +1,36 @@
 const axios  = require('axios')
 const prisma = require('../lib/prisma')
 
+function normalizeWhitespace(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim()
+}
+
+async function extractContractText(s3Key) {
+  if (!s3Key) return ''
+
+  const response = await axios.get(s3Key, {
+    responseType: 'arraybuffer',
+    timeout: 60000,
+  })
+
+  const buffer = Buffer.from(response.data)
+  const header = buffer.subarray(0, 5).toString('utf8')
+  const isPdf = header === '%PDF-'
+
+  if (isPdf) {
+    try {
+      const pdfParse = require('pdf-parse')
+      const parsed = await pdfParse(buffer)
+      const text = normalizeWhitespace(parsed?.text)
+      if (text) return text
+    } catch (_) {
+      // Fall through to plain decoding below.
+    }
+  }
+
+  return normalizeWhitespace(buffer.toString('utf8'))
+}
+
 function normalizeRiskLevel(value) {
   const raw = String(value || '').trim().toUpperCase()
   if (raw.includes('CRIT')) return 'CRITICAL'
@@ -143,7 +173,18 @@ async function analyzeContract(contractId, s3Key, metadata = {}) {
   try {
     const vendorName = String(metadata.vendorName || '').trim()
     const contractTitle = String(metadata.contractTitle || metadata.fileName || '').trim()
-    const contractText = String(metadata.contractText || '').trim()
+    let contractText = String(metadata.contractText || '').trim()
+    if (!contractText) {
+      contractText = await extractContractText(s3Key)
+    }
+    if (!contractText) {
+      contractText = [
+        'Contract text extraction failed.',
+        `Contract title: ${contractTitle || 'Unknown'}`,
+        `Vendor name: ${vendorName || 'Unknown'}`,
+        `Source key: ${s3Key || 'Unavailable'}`,
+      ].join('\n')
+    }
 
     const response = await axios.post(
       `${process.env.AI_SERVICE_URL}/analyze`,
