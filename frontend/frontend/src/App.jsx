@@ -9,17 +9,39 @@ import Layout from './components/Layout'
 import LandingPage from './pages/LandingPage'
 import ProfilePage from './pages/ProfilePage'
 
+function hasToken() {
+  return Boolean(localStorage.getItem('token'))
+}
+
 function ProtectedRoute({ children }) {
-  const token = localStorage.getItem('token')
-  if (!token) return <Navigate to="/auth" replace />
+  if (!hasToken()) return <Navigate to="/auth" replace />
+  return children
+}
+
+function PublicRoute({ children }) {
+  if (hasToken()) return <Navigate to="/app/dashboard" replace />
   return children
 }
 
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/auth" element={<AuthPage />} />
+      <Route
+        path="/"
+        element={
+          <PublicRoute>
+            <LandingPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/auth"
+        element={
+          <PublicRoute>
+            <AuthPage />
+          </PublicRoute>
+        }
+      />
 
       <Route
         path="/app"
@@ -38,7 +60,10 @@ function AppRoutes() {
         <Route path="profile" element={<ProfilePage />} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route
+        path="*"
+        element={<Navigate to={hasToken() ? '/app/dashboard' : '/'} replace />}
+      />
     </Routes>
   )
 }
